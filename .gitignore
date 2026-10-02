@@ -1,0 +1,8 @@
+# 약관: API 로 받은 정보는 제3자 배포 금지 - 데이터·토큰·캡처는 저장소에 넣지 않는다
+data/
+.env
+*.jsonl
+*.log
+token.json
+docs/raw/
+__pycache__/
