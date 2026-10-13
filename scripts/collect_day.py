@@ -135,8 +135,9 @@ def step_calendar(conn, day):
 
 
 def step_universe(conn, day):
+    """종목 마스터는 '지금' 의 목록이므로 snapshot_date 는 실행일(KST). day(거래일)가 과거여도 목록은 지금 것이다 - 과거 목록은 복원 불가."""
     rows, syms = [], []
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).isoformat(); day = datetime.now(KST).strftime('%Y-%m-%d')
     for mk in ('KOSPI', 'KOSDAQ', 'KR_ETC'):
         r, _ = get('/api/v1/stocks/all', {'market': mk}); items = r.get('result') or []
         for x in items:
