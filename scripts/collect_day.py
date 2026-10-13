@@ -9,8 +9,11 @@ Parquet(정본)과 Postgres raw 스키마(적재본)에 넣는다. 같은 날을
   - Parquet 이 정본, Postgres 는 적재본. Postgres 가 깨져도 Parquet 에서 다시 넣는다.
   - 시세 값은 로그에 찍지 않는다(약관). 로그에는 건수·시간·오류만.
 
-실행: venv/bin/python scripts/collect_day.py [--date YYYY-MM-DD] [--limit N] [--skip-1d]
+실행: venv/bin/python scripts/collect_day.py [--date YYYY-MM-DD] [--limit N] [--skip-1d] [--force-1d]
   기본 날짜: 지금이 20:05 KST 이후면 오늘, 아니면 달력의 직전 거래일.
+  일봉 스냅샷은 "지금 시점" 의 값이므로 snapshot_date 는 실행일(KST)이고, --date 가 과거면 받지 않는다(과거 시점은 복원 불가).
+  2026-10-14: 10-13 분을 10-14 아침에 돌려 snapshot_date=10-13 으로 적힌 스냅샷이 생겼다(실제는 10-14 08:3x 시점, 10-14 진행 중 일봉 포함).
+  그 행은 지웠고 이 규칙이 그 재발 방지다. 백필에 스냅샷을 억지로 넣으려면 --force-1d.
 환경: PGHOST(기본 10.88.0.1) PGPORT(5433) PGUSER(toss) PGDATABASE(toss) PGPASS_FILE(<ROOT>/.pgpass_toss) PARQUET_ROOT(<ROOT>/data/parquet)
 """
 import argparse, csv, io, json, os, queue, sys, threading, time, urllib.error, urllib.parse, urllib.request, uuid
@@ -201,6 +204,7 @@ def step_1m(conn, api, day, symbols):
 
 def step_1d(conn, api, day, symbols):
     fetched = datetime.now(timezone.utc)
+    day = datetime.now(KST).strftime('%Y-%m-%d')   # 스냅샷의 날짜는 실행일. 인자의 거래일이 아니다
 
     def one(s):
         out = []; err = None
@@ -234,7 +238,7 @@ def step_1d(conn, api, day, symbols):
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--date'); ap.add_argument('--limit', type=int); ap.add_argument('--skip-1d', action='store_true')
+    ap = argparse.ArgumentParser(); ap.add_argument('--date'); ap.add_argument('--limit', type=int); ap.add_argument('--skip-1d', action='store_true'); ap.add_argument('--force-1d', action='store_true')
     a = ap.parse_args()
     day = resolve_date(a.date); run_id = f"{day}-{uuid.uuid4().hex[:8]}"; t0 = time.time(); started = datetime.now(timezone.utc)
     conn = pg_connect()
@@ -250,7 +254,10 @@ def main():
             if a.limit: symbols = symbols[:a.limit]
             log(f"{day} 유니버스 {len(symbols)} 종목"); api = Api()
             detail['candles_1m'] = step_1m(conn, api, day, symbols); log(f"1분봉 {detail['candles_1m']}")
-            if not a.skip_1d:
+            today_kst = datetime.now(KST).strftime('%Y-%m-%d')
+            if a.skip_1d or (day != today_kst and not a.force_1d):
+                detail['candles_1d'] = 'skipped (snapshot is as-of now; backfill date != today)'
+            else:
                 detail['candles_1d'] = step_1d(conn, api, day, symbols); log(f"일봉 두 벌 {detail['candles_1d']}")
             detail['api'] = api.stats
     except Exception as e:

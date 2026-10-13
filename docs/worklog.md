@@ -5,3 +5,5 @@
 - 10-02 11:30 KST README 재작성: 표 9개에서 2개로, 흐름은 날짜순 글로. 사용자 "AI티 없이, 가독성".
 - 10-14 07:30~08:30 KST **1주차 착수 (docs/04)**: 사용자 "Postgres 로, 작업 시작" → Oracle 에 toss-postgres(16, 127.0.0.1·WireGuard 바인딩), venv(pyarrow·psycopg), raw DDL 6표(월 파티션). Oracle 공인 IP 403 → 사용자가 허용 IP 추가 → 200. `collect_day.py`(달력·유니버스·1분봉·일봉 두 벌·Parquet·Postgres·run_log). 20종목 시험 미니PC·Oracle 동일(11,610봉, 429 1), 멱등 확인. cron 20:30 KST 평일. 10-13 전 종목 첫 실행 백그라운드.
 - 10-14 08:30~08:50 KST **장중 폴링 추가 (docs/04 §5)**: 표 candles_1m_intraday(upsert, changes 카운트)·poll_log, scripts/poll_intraday.py, Oracle cron 10분(09:00~20:10 KST). 사용자 '깃헙 레포?' → 기존 tossinvest-api-lab 유지, 모양 갖추면 이름 변경. 10-13 전 종목 첫 실행 진행 중.
+- 10-14 08:30 KST 폴링 시험(Oracle, 20종목 2바퀴, 프리마켓): 150행 → 155행, 2바퀴째 값 바뀐 봉 1(진행 중 봉), 429 6·9회(동시에 돌던 10-13 전 종목 순회와 한도 공유 탓). cron 3줄 등록. 주의: Postgres current_date 는 UTC 라 KST 거래일 조회는 날짜를 명시.
+- 10-14 08:40~08:55 KST 10-13 전 종목 첫 실행 완료(20분 15초, 2,388,720봉, 프로파일 604/1,892/1,808, 종목 내 빈틈 0, 429 0.27%, Parquet 11.3MB). **결함**: 일봉 스냅샷 날짜가 거래일(10-13)로 적힘, 실제 시점은 10-14 아침 → 스냅샷은 실행일 기준·백필 땐 미수집으로 코드 수정, 10-13 스냅샷 삭제. 폴링 cron 09:00 첫 자동 실행 대기.
