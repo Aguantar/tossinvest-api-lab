@@ -78,3 +78,26 @@ BEGIN
     d := d + interval '1 month';
   END LOOP;
 END $$;
+
+-- 2026-10-14 장중 폴링 (docs/04 §5). 10분마다 전 종목 최신 1분봉 200개를 받아 upsert. 같은 봉이 다시 오면 값이 바뀌었는지 센다(changes).
+--   마감 뒤 완결본(candles_1m)과 셀 단위로 비교해 "진행 중인 봉이 나중에 바뀌는가·얼마나·언제" 를 잰다.
+CREATE TABLE IF NOT EXISTS raw.candles_1m_intraday (
+  trade_date date NOT NULL,
+  symbol text NOT NULL,
+  ts timestamptz NOT NULL,
+  open numeric(18,4), high numeric(18,4), low numeric(18,4), close numeric(18,4),
+  volume numeric(20,4),
+  first_seen_at timestamptz NOT NULL,
+  last_seen_at timestamptz NOT NULL,
+  changes integer NOT NULL DEFAULT 0,     -- first_seen 이후 값이 바뀐 횟수
+  last_changed_at timestamptz,
+  PRIMARY KEY (trade_date, symbol, ts)
+);
+CREATE TABLE IF NOT EXISTS raw.poll_log (
+  run_id text PRIMARY KEY,
+  trade_date date NOT NULL,
+  started_at timestamptz NOT NULL,
+  finished_at timestamptz,
+  status text NOT NULL,
+  detail jsonb
+);

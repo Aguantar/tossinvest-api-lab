@@ -4,3 +4,4 @@
 - 10-02 11:10 KST README 작성 (흐름 표 9행, 측정값, 규칙 7, 틀렸던 것 8, 못 푼 것, 설계 변화 표). 저장소는 아직 미생성, 사용자 확인 뒤 공개.
 - 10-02 11:30 KST README 재작성: 표 9개에서 2개로, 흐름은 날짜순 글로. 사용자 "AI티 없이, 가독성".
 - 10-14 07:30~08:30 KST **1주차 착수 (docs/04)**: 사용자 "Postgres 로, 작업 시작" → Oracle 에 toss-postgres(16, 127.0.0.1·WireGuard 바인딩), venv(pyarrow·psycopg), raw DDL 6표(월 파티션). Oracle 공인 IP 403 → 사용자가 허용 IP 추가 → 200. `collect_day.py`(달력·유니버스·1분봉·일봉 두 벌·Parquet·Postgres·run_log). 20종목 시험 미니PC·Oracle 동일(11,610봉, 429 1), 멱등 확인. cron 20:30 KST 평일. 10-13 전 종목 첫 실행 백그라운드.
+- 10-14 08:30~08:50 KST **장중 폴링 추가 (docs/04 §5)**: 표 candles_1m_intraday(upsert, changes 카운트)·poll_log, scripts/poll_intraday.py, Oracle cron 10분(09:00~20:10 KST). 사용자 '깃헙 레포?' → 기존 tossinvest-api-lab 유지, 모양 갖추면 이름 변경. 10-13 전 종목 첫 실행 진행 중.
