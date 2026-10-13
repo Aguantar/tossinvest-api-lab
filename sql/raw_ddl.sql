@@ -101,3 +101,40 @@ CREATE TABLE IF NOT EXISTS raw.poll_log (
   status text NOT NULL,
   detail jsonb
 );
+
+-- 2026-10-14 API 전수 점검 뒤 추가 (docs/04 §6). 원문은 payload jsonb 로 그대로 두고 열은 dbt 에서 고른다.
+-- 일별 시계열 5종 (투자자별 매매·공매도·프로그램·신용·대차). count/until 페이지네이션이 있어 과거를 받을 수 있다. updatedAt 이 있으므로 값이 바뀔 수 있어 upsert.
+CREATE TABLE IF NOT EXISTS raw.trend_daily (
+  endpoint text NOT NULL,            -- investor_trading / short_selling / program_trades / credit_trades / securities_lending
+  symbol text NOT NULL,
+  trade_date date NOT NULL,
+  payload jsonb NOT NULL,
+  fetched_at timestamptz NOT NULL,
+  PRIMARY KEY (endpoint, symbol, trade_date)
+);
+-- 종목 기본정보 스냅샷 (상장일·폐지일·상태·발행주식수). /stocks 200건씩
+CREATE TABLE IF NOT EXISTS raw.stock_info_snapshot (
+  snapshot_date date NOT NULL, symbol text NOT NULL, payload jsonb NOT NULL, fetched_at timestamptz NOT NULL,
+  PRIMARY KEY (snapshot_date, symbol)
+);
+-- 매수 유의·VI 등 경고 스냅샷. 있는 종목만 행. 경고가 없으면 그날 그 종목 행이 없다는 것이 정보다.
+CREATE TABLE IF NOT EXISTS raw.warnings_snapshot (
+  snapshot_date date NOT NULL, symbol text NOT NULL, seq integer NOT NULL, payload jsonb NOT NULL, fetched_at timestamptz NOT NULL,
+  PRIMARY KEY (snapshot_date, symbol, seq)
+);
+-- 지수(KOSPI·KOSDAQ) 일봉과 투자자별 매매대금
+CREATE TABLE IF NOT EXISTS raw.index_daily (
+  symbol text NOT NULL, kind text NOT NULL,   -- candle / investor_trading
+  trade_date date NOT NULL, payload jsonb NOT NULL, fetched_at timestamptz NOT NULL,
+  PRIMARY KEY (symbol, kind, trade_date)
+);
+-- 랭킹 스냅샷 (6 유형 × 1d, 상위 100)
+CREATE TABLE IF NOT EXISTS raw.rankings_snapshot (
+  snapshot_date date NOT NULL, type text NOT NULL, duration text NOT NULL, rank integer NOT NULL, symbol text NOT NULL,
+  payload jsonb NOT NULL, ranked_at timestamptz, fetched_at timestamptz NOT NULL,
+  PRIMARY KEY (snapshot_date, type, duration, rank)
+);
+-- 환율 (1분 갱신 표시 환율, 하루 1회 기록)
+CREATE TABLE IF NOT EXISTS raw.exchange_rate (
+  fetched_at timestamptz PRIMARY KEY, payload jsonb NOT NULL
+);

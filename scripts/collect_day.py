@@ -57,27 +57,33 @@ def pg_replace(conn, table, key_col, key_val, columns, rows):
 
 # ── API (속도 제한 공유) ───────────────────────────────────────────────────
 class Api:
-    def __init__(self):
-        self.tok = get_token(); self.lock = threading.Lock(); self.next_slot = time.time()
+    """속도 제한 그룹마다 인스턴스 하나. 한도는 그룹별 토큰 버킷(docs/00 §3)이라 그룹이 다르면 동시에 보내도 된다."""
+    def __init__(self, rate=RATE):
+        self.tok = get_token(); self.lock = threading.Lock(); self.next_slot = time.time(); self.rate = rate
         self.stats = {'req': 0, 'e429': 0, 'err': 0}
 
     def _slot(self):
         with self.lock:
-            t = max(self.next_slot, time.time()); self.next_slot = t + 1.0 / RATE
+            t = max(self.next_slot, time.time()); self.next_slot = t + 1.0 / self.rate
         d = t - time.time()
         if d > 0: time.sleep(d)
 
     def candles(self, params):
         """(candles, nextBefore, retries_429) 또는 (None, None, retries) 실패."""
-        url = BASE + '/api/v1/candles?' + urllib.parse.urlencode(params); r429 = 0
+        res, r429 = self.call('/api/v1/candles', params)
+        if res is None: return None, None, r429
+        return res.get('candles', []), res.get('nextBefore'), r429
+
+    def call(self, path, params=None):
+        """임의 GET. (result, retries_429). 실패면 (None, retries)."""
+        url = BASE + path + ('?' + urllib.parse.urlencode(params) if params else ''); r429 = 0
         for attempt in range(5):
             self._slot()
             try:
                 with urllib.request.urlopen(urllib.request.Request(url, headers={'Authorization': f'Bearer {self.tok}'}), timeout=20) as r:
                     d = json.load(r)
                 with self.lock: self.stats['req'] += 1
-                res = d.get('result') or {}
-                return res.get('candles', []), res.get('nextBefore'), r429
+                return (d.get('result') if d.get('result') is not None else {}), r429
             except urllib.error.HTTPError as e:
                 with self.lock: self.stats['req'] += 1
                 if e.code == 429:
@@ -88,11 +94,11 @@ class Api:
                     self.tok = get_token(force=True); continue
                 with self.lock: self.stats['err'] += 1
                 if e.code >= 500: time.sleep(2 * (attempt + 1)); continue
-                return None, None, r429
+                return None, r429
             except Exception:
                 with self.lock: self.stats['err'] += 1
                 time.sleep(2 * (attempt + 1))
-        return None, None, r429
+        return None, r429
 
 
 def run_pool(symbols, fn):
@@ -238,8 +244,74 @@ def step_1d(conn, api, day, symbols):
     return {'symbols': len(symbols), 'rows': len(rows), 'parquet_bytes': size, 'errors': errs}
 
 
+TREND = {'investor_trading': 'investor-trading', 'short_selling': 'short-selling', 'program_trades': 'program-trades',
+         'credit_trades': 'credit-trades', 'securities_lending': 'securities-lending'}
+
+
+def pg_upsert_json(conn, table, cols, key_cols, rows):
+    """payload 를 가진 표에 upsert (충돌 시 payload·fetched_at 갱신)."""
+    if not rows: return 0
+    with conn.cursor() as cur:
+        cur.execute(f"CREATE TEMP TABLE up_in (LIKE {table} INCLUDING DEFAULTS) ON COMMIT DROP")
+        buf = io.StringIO(); w = csv.writer(buf)
+        for r in rows: w.writerow(['' if v is None else v for v in r])
+        buf.seek(0)
+        with cur.copy(f"COPY up_in ({', '.join(cols)}) FROM STDIN WITH (FORMAT csv, NULL '')") as cp: cp.write(buf.read())
+        upd = ', '.join(f"{c} = EXCLUDED.{c}" for c in cols if c not in key_cols)
+        cur.execute(f"INSERT INTO {table} ({', '.join(cols)}) SELECT {', '.join(cols)} FROM up_in ON CONFLICT ({', '.join(key_cols)}) DO UPDATE SET {upd}")
+    conn.commit(); return len(rows)
+
+
+def step_extras(conn, symbols, days=10):
+    """2026-10-14 (docs/04 §6): 종목 기본정보·경고·일별 추세 5종·지수·랭킹·환율. 전부 '지금' 기준이라 snapshot_date 는 실행일.
+    추세 5종은 count=days 로 최근 며칠만 받아 upsert (updatedAt 이 있어 값이 바뀔 수 있다). 과거 전체는 backfill 스크립트가 따로."""
+    today = datetime.now(KST).strftime('%Y-%m-%d'); now = datetime.now(timezone.utc); out = {}
+    stock = Api(rate=5.0); trend = Api(rate=10.0); rank = Api(rate=5.0); ind = Api(rate=5.0); info = Api(rate=3.0)
+    # 1) 종목 기본정보 (200건씩)
+    rows = []
+    for i in range(0, len(symbols), 200):
+        res, _ = stock.call('/api/v1/stocks', {'symbols': ','.join(symbols[i:i+200])})
+        for x in (res or []): rows.append([today, x['symbol'], json.dumps(x, ensure_ascii=False), now])
+    out['stock_info'] = pg_upsert_json(conn, 'raw.stock_info_snapshot', ['snapshot_date', 'symbol', 'payload', 'fetched_at'], ['snapshot_date', 'symbol'], rows)
+    # 2) 경고 (있는 종목만)
+    def warn(s):
+        res, _ = stock.call(f'/api/v1/stocks/{s}/warnings'); return s, res
+    wr = run_pool(symbols, warn); rows = []
+    for s, res in wr:
+        for i, x in enumerate(res or []): rows.append([today, s, i, json.dumps(x, ensure_ascii=False), now])
+    with conn.cursor() as cur: cur.execute("DELETE FROM raw.warnings_snapshot WHERE snapshot_date = %s", (today,))
+    conn.commit(); out['warnings'] = {'rows': pg_upsert_json(conn, 'raw.warnings_snapshot', ['snapshot_date', 'symbol', 'seq', 'payload', 'fetched_at'], ['snapshot_date', 'symbol', 'seq'], rows), 'failed': sum(1 for _, r in wr if r is None)}
+    # 3) 추세 5종 (최근 days 일, upsert)
+    for key, ep in TREND.items():
+        def one(s, ep=ep):
+            res, _ = trend.call(f'/api/v1/stocks/{s}/{ep}', {'count': days}); return s, res
+        rr = run_pool(symbols, one); rows = []
+        for s, res in rr:
+            for x in ((res or {}).get('records') or []): rows.append([key, s, x['date'][:10], json.dumps(x, ensure_ascii=False), now])
+        out[key] = {'rows': pg_upsert_json(conn, 'raw.trend_daily', ['endpoint', 'symbol', 'trade_date', 'payload', 'fetched_at'], ['endpoint', 'symbol', 'trade_date'], rows), 'failed': sum(1 for _, r in rr if r is None)}
+    # 4) 지수
+    rows = []
+    for sym in ('KOSPI', 'KOSDAQ'):
+        res, _ = ind.call(f'/api/v1/market-indicators/{sym}/candles', {'interval': '1d', 'count': days})
+        for x in ((res or {}).get('candles') or []): rows.append([sym, 'candle', x['timestamp'][:10], json.dumps(x), now])
+        res, _ = trend.call(f'/api/v1/market-indicators/{sym}/investor-trading', {'interval': '1d', 'count': days})
+        for x in ((res or {}).get('records') or []): rows.append([sym, 'investor_trading', x['date'][:10], json.dumps(x), now])
+    out['index'] = pg_upsert_json(conn, 'raw.index_daily', ['symbol', 'kind', 'trade_date', 'payload', 'fetched_at'], ['symbol', 'kind', 'trade_date'], rows)
+    # 5) 랭킹 6유형 × 1d
+    rows = []
+    for t in ('MARKET_TRADING_AMOUNT', 'MARKET_TRADING_VOLUME', 'TOP_GAINERS', 'TOP_LOSERS', 'TOSS_SECURITIES_TRADING_AMOUNT', 'TOSS_SECURITIES_TRADING_VOLUME'):
+        res, _ = rank.call('/api/v1/rankings', {'type': t, 'marketCountry': 'KR', 'duration': '1d', 'count': 100})
+        for x in ((res or {}).get('rankings') or []): rows.append([today, t, '1d', x['rank'], x['symbol'], json.dumps(x, ensure_ascii=False), (res or {}).get('rankedAt'), now])
+    out['rankings'] = pg_upsert_json(conn, 'raw.rankings_snapshot', ['snapshot_date', 'type', 'duration', 'rank', 'symbol', 'payload', 'ranked_at', 'fetched_at'], ['snapshot_date', 'type', 'duration', 'rank'], rows)
+    # 6) 환율
+    res, _ = info.call('/api/v1/exchange-rate', {'baseCurrency': 'USD', 'quoteCurrency': 'KRW'})
+    if res: pg_upsert_json(conn, 'raw.exchange_rate', ['fetched_at', 'payload'], ['fetched_at'], [[now, json.dumps(res)]]); out['exchange_rate'] = 1
+    out['api'] = {'stock': stock.stats, 'trend': trend.stats, 'rank': rank.stats, 'indicator': ind.stats, 'info': info.stats}
+    return out
+
+
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--date'); ap.add_argument('--limit', type=int); ap.add_argument('--skip-1d', action='store_true'); ap.add_argument('--force-1d', action='store_true')
+    ap = argparse.ArgumentParser(); ap.add_argument('--date'); ap.add_argument('--limit', type=int); ap.add_argument('--skip-1d', action='store_true'); ap.add_argument('--force-1d', action='store_true'); ap.add_argument('--skip-extras', action='store_true')
     a = ap.parse_args()
     day = resolve_date(a.date); run_id = f"{day}-{uuid.uuid4().hex[:8]}"; t0 = time.time(); started = datetime.now(timezone.utc)
     conn = pg_connect()
@@ -261,6 +333,8 @@ def main():
             else:
                 detail['candles_1d'] = step_1d(conn, api, day, symbols); log(f"일봉 두 벌 {detail['candles_1d']}")
             detail['api'] = api.stats
+            if not a.skip_extras:
+                detail['extras'] = step_extras(conn, symbols); log(f"부가 {detail['extras']}")
     except Exception as e:
         status = 'error'; detail['error'] = str(e)[:500]; log(f"ERROR {e}")
     detail['elapsed_s'] = round(time.time() - t0, 1)
