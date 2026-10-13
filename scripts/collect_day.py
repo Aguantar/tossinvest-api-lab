@@ -43,13 +43,21 @@ def pg_connect():
                            user=os.environ.get('PGUSER', 'toss'), dbname=os.environ.get('PGDATABASE', 'toss'), password=pw, connect_timeout=15)
 
 
+TEST_SYMBOLS = None   # --limit 실행이면 그 종목 목록. 날짜 전체가 아니라 그 종목만 지우고 넣는다
+
+
 def pg_replace(conn, table, key_col, key_val, columns, rows):
-    """key_col = key_val 인 행을 지우고 rows 를 COPY 로 넣는다. 한 트랜잭션."""
+    """key_col = key_val 인 행을 지우고 rows 를 COPY 로 넣는다. 한 트랜잭션.
+    2026-10-14 (docs/04 §6-3): --limit 20 테스트가 날짜 전체를 지워 10-13 전 종목 239만 행을 20종목분으로 덮어썼다.
+    테스트 모드에서는 symbol 열이 있는 표에 한해 그 종목만 지운다."""
     buf = io.StringIO(); w = csv.writer(buf)
     for r in rows: w.writerow(['' if v is None else v for v in r])
     buf.seek(0)
     with conn.cursor() as cur:
-        cur.execute(f"DELETE FROM {table} WHERE {key_col} = %s", (key_val,))
+        if TEST_SYMBOLS is not None and 'symbol' in columns:
+            cur.execute(f"DELETE FROM {table} WHERE {key_col} = %s AND symbol = ANY(%s)", (key_val, TEST_SYMBOLS))
+        else:
+            cur.execute(f"DELETE FROM {table} WHERE {key_col} = %s", (key_val,))
         with cur.copy(f"COPY {table} ({', '.join(columns)}) FROM STDIN WITH (FORMAT csv, NULL '')") as cp:
             cp.write(buf.read())
     conn.commit()
@@ -314,6 +322,9 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--date'); ap.add_argument('--limit', type=int); ap.add_argument('--skip-1d', action='store_true'); ap.add_argument('--force-1d', action='store_true'); ap.add_argument('--skip-extras', action='store_true')
     a = ap.parse_args()
     day = resolve_date(a.date); run_id = f"{day}-{uuid.uuid4().hex[:8]}"; t0 = time.time(); started = datetime.now(timezone.utc)
+    global PARQUET_ROOT, TEST_SYMBOLS
+    if a.limit:
+        PARQUET_ROOT = PARQUET_ROOT.rstrip('/') + '-test'   # 테스트는 정본 Parquet 을 건드리지 않는다
     conn = pg_connect()
     with conn.cursor() as cur:
         cur.execute("INSERT INTO raw.run_log (run_id, job, trade_date, started_at, status) VALUES (%s, 'collect_day', %s, %s, 'running')", (run_id, day, started))
@@ -324,8 +335,8 @@ def main():
             status = 'skipped'; detail = {'reason': 'not a trading day'}; log(f"{day} 휴장 - 건너뜀")
         else:
             symbols = step_universe(conn, day)
-            if a.limit: symbols = symbols[:a.limit]
-            log(f"{day} 유니버스 {len(symbols)} 종목"); api = Api()
+            if a.limit: symbols = symbols[:a.limit]; TEST_SYMBOLS = symbols
+            log(f"{day} 유니버스 {len(symbols)} 종목{' (테스트: 이 종목만 지우고 넣음, Parquet 은 -test 경로)' if a.limit else ''}"); api = Api()
             detail['candles_1m'] = step_1m(conn, api, day, symbols); log(f"1분봉 {detail['candles_1m']}")
             today_kst = datetime.now(KST).strftime('%Y-%m-%d')
             if a.skip_1d or (day != today_kst and not a.force_1d):
