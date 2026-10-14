@@ -84,8 +84,10 @@ class Api:
 
     def call(self, path, params=None):
         """임의 GET. (result, retries_429). 실패면 (None, retries)."""
-        url = BASE + path + ('?' + urllib.parse.urlencode(params) if params else ''); r429 = 0
-        for attempt in range(5):
+        url = BASE + path + ('?' + urllib.parse.urlencode(params) if params else ''); r429 = 0; attempt = 0
+        # 2026-10-14 (docs/04 §6-4): 429 는 시도 횟수를 소모하지 않는다. 같은 그룹의 잡이 겹치면 429 가 연달아 나는데,
+        #   5회 시도에 429 가 섞이면 포기해서 종목 하나(217190)가 600봉으로 남았다. Retry-After 를 지키는 한 429 는 60회까지 기다린다.
+        while attempt < 5 and r429 < 60:
             self._slot()
             try:
                 with urllib.request.urlopen(urllib.request.Request(url, headers={'Authorization': f'Bearer {self.tok}'}), timeout=20) as r:
@@ -98,14 +100,15 @@ class Api:
                     r429 += 1
                     with self.lock: self.stats['e429'] += 1
                     time.sleep(float(e.headers.get('Retry-After', '1'))); continue
-                if e.code == 401 and attempt == 0:
+                attempt += 1
+                if e.code == 401 and attempt == 1:
                     self.tok = get_token(force=True); continue
                 with self.lock: self.stats['err'] += 1
-                if e.code >= 500: time.sleep(2 * (attempt + 1)); continue
+                if e.code >= 500: time.sleep(2 * attempt); continue
                 return None, r429
             except Exception:
                 with self.lock: self.stats['err'] += 1
-                time.sleep(2 * (attempt + 1))
+                attempt += 1; time.sleep(2 * attempt)
         return None, r429
 
 
