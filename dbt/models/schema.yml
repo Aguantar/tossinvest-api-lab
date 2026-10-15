@@ -28,7 +28,10 @@ models:
       - name: trade_date
         tests: [unique, not_null]
   - name: dq_adjustment_changes_daily
-    description: "한 행 = 스냅샷일 × 종목, 수정주가가 바뀐 종목만."
+    description: "한 행 = 스냅샷일 × 종목, 어느 벌이든 과거 종가가 바뀐 종목만. change_kind 로 기업행위와 데이터 정정을 가른다."
+    columns:
+      - name: change_kind
+        tests: [{accepted_values: {arguments: {values: ['corporate_action', 'data_revision', 'mixed']}}}]
   - name: dq_trend_coverage_daily
     description: "한 행 = 거래일 × endpoint. 유니버스 대비 커버리지."
   - name: mart_market_daily
