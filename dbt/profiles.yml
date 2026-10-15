@@ -1,0 +1,13 @@
+# 비밀번호는 환경변수 PGPASSWORD (Oracle: env.sh 가 .pgpass_toss 에서 읽는다). 저장소에는 값이 없다.
+toss:
+  target: oracle
+  outputs:
+    oracle:
+      type: postgres
+      host: "{{ env_var('PGHOST', '127.0.0.1') }}"
+      port: "{{ env_var('PGPORT', '5433') | int }}"
+      user: toss
+      password: "{{ env_var('PGPASSWORD') }}"
+      dbname: toss
+      schema: analytics
+      threads: 2

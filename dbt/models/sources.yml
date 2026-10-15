@@ -1,0 +1,35 @@
+version: 2
+sources:
+  - name: raw
+    schema: raw
+    description: "collect_day.py / poll_intraday.py 가 적재한 원천. Parquet 이 정본, 이 표는 적재본 (docs/04)."
+    loaded_at_field: fetched_at
+    freshness:
+      warn_after: {count: 30, period: hour}
+      error_after: {count: 54, period: hour}   # 주말·휴장 포함 이틀 반
+    tables:
+      - name: candles_1m
+        description: "한 행 = 종목 × 1분봉. ts 는 봉 종료 시각(FAQ). 마감 뒤 20:30 순회."
+      - name: candles_1m_intraday
+        description: "한 행 = 종목 × 1분봉, 장중 10분 폴링으로 upsert. changes = 값이 바뀐 횟수."
+      - name: candles_1d_snapshot
+        description: "한 행 = 스냅샷일 × 종목 × 거래일 × adjusted. 60일 창을 매일 다시 받는다 - 정정 이력의 원재료."
+      - name: universe_snapshot
+      - name: stock_info_snapshot
+        description: "한 행 = 스냅샷일 × 종목. /stocks 기본정보 (상장일·폐지일·상태·발행주식수·NXT 지원·거래정지)."
+      - name: warnings_snapshot
+        description: "한 행 = 스냅샷일 × 종목 × 경고. 경고가 없으면 행이 없다."
+      - name: trend_daily
+        description: "한 행 = endpoint × 종목 × 거래일. 없는 날은 행이 없다 (신용은 하루 늦게 나온다)."
+      - name: index_daily
+      - name: rankings_snapshot
+      - name: exchange_rate
+        loaded_at_field: fetched_at
+      - name: market_calendar
+        loaded_at_field: fetched_at
+      - name: sweep_manifest
+        description: "한 행 = 거래일 × 종목. 수집기가 받은 봉 수·첫·마지막 봉·요청·429·상태. 빈틈 판정의 입력."
+      - name: run_log
+        loaded_at_field: started_at
+      - name: poll_log
+        loaded_at_field: started_at

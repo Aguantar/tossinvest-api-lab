@@ -1,0 +1,31 @@
+# 토스증권 2주차 (2026-10-15, docs/05). raw(수집본) 위에 staging → dimensions → quality → marts.
+# 원칙: 원천은 해석하지 않고(raw 는 jsonb 그대로), 해석은 여기서. 판정(빈틈·일치·정정)은 전부 quality 표와 테스트가 한다.
+name: toss_pipeline
+version: '0.1.0'
+profile: toss
+model-paths: ["models"]
+snapshot-paths: ["snapshots"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+vars:
+  run_date: null          # 'YYYY-MM-DD' 를 주면 그 거래일만 (백필). 없으면 전체 (아직 작아서)
+models:
+  toss_pipeline:
+    +persist_docs: {relation: true, columns: true}
+    staging:
+      +schema: staging
+      +materialized: view
+    dimensions:
+      +schema: dim
+      +materialized: table
+    quality:
+      +schema: quality
+      +materialized: table
+    marts:
+      +schema: mart
+      +materialized: table
+snapshots:
+  toss_pipeline:
+    +target_schema: snap
