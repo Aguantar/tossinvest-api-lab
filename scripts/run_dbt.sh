@@ -8,7 +8,7 @@ P "insert into raw.run_log (run_id, job, trade_date, started_at, status) values 
 status=ok; detail=""
 for step in "run" "snapshot" "test" "source freshness"; do
   out=$(/home/ubuntu/toss/venv/bin/dbt $step --profiles-dir . 2>&1); rc=$?
-  summary=$(echo "$out" | grep -E "^.*Done\." | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | cut -c12-)
+  summary=$(echo "$out" | grep -E "^.*Done\." | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | sed -E "s/^.*Done\\. //")
   echo "$(date -u +%FT%TZ) $RUN_ID $step rc=$rc $summary" >> "$LOG"
   detail="$detail$step: rc=$rc $summary; "
   if [ $rc -ne 0 ] && [ "$step" != "source freshness" ]; then status=error; echo "$out" | grep -E "FAIL|ERROR" | head -20 >> "$LOG"; break; fi

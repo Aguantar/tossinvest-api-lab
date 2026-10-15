@@ -12,6 +12,10 @@ sources:
         description: "한 행 = 종목 × 1분봉. ts 는 봉 종료 시각(FAQ). 마감 뒤 20:30 순회."
       - name: candles_1m_intraday
         description: "한 행 = 종목 × 1분봉, 장중 10분 폴링으로 upsert. changes = 값이 바뀐 횟수."
+        loaded_at_field: last_seen_at
+        freshness:
+          warn_after: {count: 12, period: hour}     # 장중엔 10분마다 갱신. 밤·주말은 마지막 폴링(20:10) 기준 - 월요일 09:00 까지 60h 라 error 는 끄고 warn 만
+          error_after: null
       - name: candles_1d_snapshot
         description: "한 행 = 스냅샷일 × 종목 × 거래일 × adjusted. 60일 창을 매일 다시 받는다 - 정정 이력의 원재료."
       - name: universe_snapshot
